@@ -29,7 +29,7 @@
                     EPOLL_CTL_MOD：修改已经注册的fd的监听事件；
                     EPOLL_CTL_DEL：从epfd中删除一个fd；
               第三个参数是需要监听的fd，第四个参数是告诉内核需要监听什么事，struct epoll_event结构如下：
-
+```c
               typedef union epoll_data {
                   void *ptr;
                   int fd;
@@ -41,7 +41,7 @@
                   __uint32_t events; /* Epoll events */
                   epoll_data_t data; /* User data variable */
               };
-
+```
               events可以是以下几个宏的集合：
               EPOLLIN ：表示对应的文件描述符可以读（包括对端SOCKET正常关闭）；
               EPOLLOUT：表示对应的文件描述符可以写；
@@ -65,7 +65,7 @@
         1 包含头文件#include <sys/epoll.h>
         2 通过create_epoll(int maxfds)来创建一个epoll的句柄,在用完之后,记得用close()来关闭。
         3 主循环里面nfds = epoll_wait(kdpfd, events, maxevents, -1);
-
+```c
         for( ; ; )
         {
             nfds = epoll_wait(epfd,events,20,500);
@@ -100,9 +100,9 @@
                 }
             }
         }
-
+```
 服务器端例子：
-
+```
 #include <iostream>
 #include <sys/socket.h>
 #include <sys/epoll.h>
@@ -144,7 +144,6 @@ int main(int argc, char* argv[])
     ssize_t n;
     char line[MAXLINE];
     socklen_t clilen;
-
 
     if ( 2 == argc )
     {
@@ -275,7 +274,7 @@ int main(int argc, char* argv[])
     }
     return 0;
 }
-
+```
 Epoll在LT和ET模式下的读写方式
 在一个非阻塞的socket上调用read/write函数, 返回EAGAIN或者EWOULDBLOCK(注: EAGAIN就是EWOULDBLOCK)
 从字面上看, 意思是:EAGAIN: 再试一次，EWOULDBLOCK: 如果这是一个阻塞socket, 操作将被block，perror输出: Resource temporarily unavailable
@@ -291,14 +290,16 @@ Epoll在LT和ET模式下的读写方式
 对于select和epoll的LT模式，这种读写方式是没有问题的。但对于epoll的ET模式，这种方式还有漏洞。
 
 epoll的两种模式LT和ET
+
 二者的差异在于level-trigger模式下只要某个socket处于readable/writable状态，无论什么时候进行epoll_wait都会返回该socket；而edge-trigger模式下只有某个socket从unreadable变为readable或从unwritable变为writable时，epoll_wait才会返回该socket。
 
 所以，在epoll的ET模式下，正确的读写方式为:
+
 读：只要可读，就一直读，直到返回0，或者 errno = EAGAIN
 写:只要可写，就一直写，直到数据发送完，或者 errno = EAGAIN
 
 正确的读
-
+```c
 n = 0;
 while ((nread = read(fd, buf + n, BUFSIZ-1)) > 0) {
 n += nread;
@@ -320,19 +321,22 @@ break;
 }
 n -= nwrite;
 }
+```
 正确的accept，accept 要考虑 2 个问题
 (1) 阻塞模式 accept 存在的问题
+
 考虑这种情况：TCP连接被客户端夭折，即在服务器调用accept之前，客户端主动发送RST终止连接，导致刚刚建立的连接从就绪队列中移出，如果套接口被设置成阻塞模式，服务器就会一直阻塞在accept调用上，直到其他某个客户建立一个新的连接为止。但是在此期间，服务器单纯地阻塞在accept调用上，就绪队列中的其他描述符都得不到处理。
 
 解决办法是把监听套接口设置为非阻塞，当客户在服务器调用accept之前中止某个连接时，accept调用可以立即返回-1，这时源自Berkeley的实现会在内核中处理该事件，并不会将该事件通知给epool，而其他实现把errno设置为ECONNABORTED或者EPROTO错误，我们应该忽略这两个错误。
 
 (2)ET模式下accept存在的问题
+
 考虑这种情况：多个连接同时到达，服务器的TCP就绪队列瞬间积累多个就绪连接，由于是边缘触发模式，epoll只会通知一次，accept只处理一个连接，导致TCP就绪队列中剩下的连接都得不到处理。
 
 解决办法是用while循环抱住accept调用，处理完TCP就绪队列中的所有连接后再退出循环。如何知道是否处理完就绪队列中的所有连接呢？accept返回-1并且errno设置为EAGAIN就表示所有连接都处理完。
 
 综合以上两种情况，服务器应该使用非阻塞地accept，accept在ET模式下的正确使用方式为：
-
+```c
 while ((conn_sock = accept(listenfd,(struct sockaddr *) &remote, (size_t *)&addrlen)) > 0) {
 handle_client(conn_sock);
 }
@@ -340,6 +344,7 @@ if (conn_sock == -1) {
 if (errno != EAGAIN && errno != ECONNABORTED && errno != EPROTO && errno != EINTR)
 perror("accept");
 }
+```
 一道腾讯后台开发的面试题
 使用Linuxepoll模型，水平触发模式；当socket可写时，会不停的触发socket可写的事件，如何处理？
 
@@ -356,7 +361,7 @@ perror("accept");
 这种方式的优点是：数据不多的时候可以避免epoll的事件处理，提高效率。
 
 最后贴一个使用epoll,ET模式的简单HTTP服务器代码:
-
+```c
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <netinet/in.h>
@@ -489,3 +494,4 @@ close(fd);
  
 return 0;
 }
+```
